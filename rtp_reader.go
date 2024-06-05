@@ -29,8 +29,6 @@ type RTPReader struct {
 	unreadPayload []byte
 	unread        int
 
-	pktBuffer chan []byte
-
 	// We want to track our last SSRC.
 	lastSSRC uint32
 }
@@ -57,13 +55,12 @@ func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
 	}
 
 	w := RTPReader{
-		Sess:          sess,
-		unreadPayload: []byte{},
-		PayloadType:   payloadType,
-		OnRTP:         func(pkt *rtp.Packet) {},
+		Sess:        sess,
+		PayloadType: payloadType,
+		OnRTP:       func(pkt *rtp.Packet) {},
 
-		pktBuffer: make(chan []byte, 100),
-		seqReader: RTPExtendedSequenceNumber{},
+		seqReader:     RTPExtendedSequenceNumber{},
+		unreadPayload: make([]byte, RTPBufSize),
 	}
 
 	return &w
@@ -76,24 +73,34 @@ func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
 // NOTE: Consider that if you are passsing smaller buffer than RTP payload, io.ErrShortBuffer is returned
 func (r *RTPReader) Read(b []byte) (int, error) {
 	if r.unread > 0 {
-		n := r.readPayload(b, r.unreadPayload)
+		n := r.readPayload(b, r.unreadPayload[:r.unread])
 		return n, nil
 	}
 
 	var n int
 	var err error
 
+	// For io.ReadAll buffer size is constantly changing and starts small
+	// Normally user should > RTPBufSize
+	// Use unread buffer and still avoid alloc
+	buf := b
+	if len(b) < RTPBufSize {
+		r.Sess.log.Debug().Msg("Read RTP buf is < RTPBufSize. Using internal")
+		buf = r.unreadPayload
+	}
+
 	pkt := rtp.Packet{}
 	if r.RTPSession != nil {
-		if err := r.RTPSession.ReadRTP(b, &pkt); err != nil {
+		if err := r.RTPSession.ReadRTP(buf, &pkt); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return 0, io.EOF
 			}
 			return 0, err
 		}
 	} else {
+
 		// Reuse read buffer.
-		n, err = r.Sess.ReadRTPRaw(b)
+		n, err = r.Sess.ReadRTPRaw(buf)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return 0, io.EOF
@@ -103,7 +110,7 @@ func (r *RTPReader) Read(b []byte) (int, error) {
 
 		// NOTE: pkt after unmarshall will hold reference on b buffer.
 		// Caller should do copy of PacketHeader if it reuses buffer
-		if err := pkt.Unmarshal(b[:n]); err != nil {
+		if err := pkt.Unmarshal(buf[:n]); err != nil {
 			return 0, err
 		}
 	}
@@ -131,14 +138,19 @@ func (r *RTPReader) Read(b []byte) (int, error) {
 	r.PacketHeader = pkt.Header
 	r.OnRTP(&pkt)
 
-	return r.readPayload(b, pkt.Payload), nil
+	size := min(len(b), len(buf))
+	n = r.readPayload(buf[:size], pkt.Payload)
+	return n, nil
 }
 
 func (r *RTPReader) readPayload(b []byte, payload []byte) int {
 	n := copy(b, payload)
 	if n < len(payload) {
-		r.unreadPayload = payload[n:]
-		r.unread = len(payload) - n
+		written := copy(r.unreadPayload, payload[n:])
+		if written < len(payload[n:]) {
+			r.Sess.log.Error().Msg("Payload is huge, it will be unread")
+		}
+		r.unread = written
 	} else {
 		r.unread = 0
 	}
