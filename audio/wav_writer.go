@@ -13,14 +13,16 @@ type WavWriter struct {
 
 	W              io.Writer
 	headersWritten bool
+	dataSize       int
 }
 
-func NewWavWriter(w io.Writer) *WavWriter {
+func NewWavWriter(w io.Writer, dataSize int) *WavWriter {
 	return &WavWriter{
 		SampleRate:  8000,
 		BitDepth:    16,
 		NumChans:    1,
 		AudioFormat: 0,
+		dataSize:    dataSize,
 	}
 }
 
@@ -41,7 +43,7 @@ func (ww *WavWriter) Write(audio []byte) (int, error) {
 	bitsPerSample := ww.BitDepth
 	sampleRate := ww.SampleRate
 	// Calculate file size
-	fileSize := len(audio) + headerSize - 8
+	fileSize := ww.dataSize + headerSize - 8
 
 	// Create the header
 	header := make([]byte, headerSize)
@@ -61,13 +63,14 @@ func (ww *WavWriter) Write(audio []byte) (int, error) {
 
 	// data chunk
 	copy(header[36:40], []byte("data"))
-	binary.LittleEndian.PutUint32(header[40:44], uint32(len(audio)))
+	binary.LittleEndian.PutUint32(header[40:44], uint32(ww.dataSize))
 
 	// Combine header and audio payload
 	n, err := w.Write(header)
 	if err != nil {
 		return 0, err
 	}
+	ww.headersWritten = true
 
 	nn, err := w.Write(audio)
 	return n + nn, err
