@@ -6,6 +6,7 @@ toolchain go1.21.5
 
 require (
 	github.com/emiago/sipgo v0.22.0
+	github.com/go-audio/riff v1.0.0
 	github.com/pion/rtcp v1.2.10
 	github.com/pion/rtp v1.8.6
 	github.com/rs/zerolog v1.32.0
