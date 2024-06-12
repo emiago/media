@@ -2,7 +2,6 @@ package media
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -110,6 +109,7 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 		return err
 	}
 
+	s.rtcpMU.Lock()
 	// pktArrival := time.Now()
 	stats := &s.readStats
 	now := time.Now()
@@ -150,11 +150,13 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 	stats.lastRTPTime = now
 	stats.lastRTPTimestamp = readPkt.Timestamp
 
+	s.rtcpMU.Unlock()
+
 	select {
 	case t := <-s.rtcpTicker.C:
-		s.writeRTCP(t, stats.SSRC)
-		stats.IntervalFirstPktSeqNum = 0
-		stats.IntervalTotalPackets = 0
+		s.writeRTCP(t)
+		// stats.IntervalFirstPktSeqNum = 0
+		// stats.IntervalTotalPackets = 0
 	default:
 	}
 
@@ -163,13 +165,12 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 
 func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	// Do not write if we are creating RTCP packet
-	s.rtcpMU.Lock()
-	defer s.rtcpMU.Unlock()
 
 	if err := s.Sess.WriteRTP(pkt); err != nil {
 		return err
 	}
 
+	s.rtcpMU.Lock()
 	writeStats := &s.writeStats
 	// For now we only track latest SSRC
 	if writeStats.SSRC != pkt.SSRC {
@@ -182,6 +183,14 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	writeStats.OctetCount += uint32(len(pkt.Payload))
 	writeStats.lastPacketTime = time.Now()
 	writeStats.lastPacketTimestamp = pkt.Timestamp
+
+	s.rtcpMU.Unlock()
+
+	select {
+	case t := <-s.rtcpTicker.C:
+		s.writeRTCP(t)
+	default:
+	}
 	return nil
 }
 
@@ -253,24 +262,37 @@ func (s *RTPSession) readReceptionReport(rr rtcp.ReceptionReport, now time.Time)
 	s.readStats.lastReceptionReportSeqNum = rr.LastSequenceNumber
 }
 
-func (s *RTPSession) writeRTCP(now time.Time, ssrc uint32) {
+func (s *RTPSession) writeRTCP(now time.Time) {
 	var pkt rtcp.Packet
 
 	// If there is no writer in session (a=recvonly) then generate only receiver report
 	// otherwise always go with sender report with reception reports
 	s.rtcpMU.Lock()
 	if s.Sess.Mode == sdp.ModeRecvonly {
+		if s.readStats.SSRC == 0 {
+			s.rtcpMU.Unlock()
+			return
+		}
 
 		rr := rtcp.ReceiverReport{}
-		s.parseReceiverReport(&rr, now, ssrc)
+		s.parseReceiverReport(&rr, now, s.readStats.SSRC)
 
 		pkt = &rr
 	} else {
+		if s.writeStats.SSRC == 0 {
+			s.rtcpMU.Unlock()
+			return
+		}
+
 		sr := rtcp.SenderReport{}
-		s.parseSenderReport(&sr, now, ssrc)
+		s.parseSenderReport(&sr, now, s.writeStats.SSRC)
 
 		pkt = &sr
 	}
+
+	// Reset any current reading interval stats
+	s.readStats.IntervalFirstPktSeqNum = 0
+	s.readStats.IntervalTotalPackets = 0
 
 	// Add interceptor
 	if s.OnWriteRTCP != nil {
@@ -288,8 +310,8 @@ func (s *RTPSession) writeRTCP(now time.Time, ssrc uint32) {
 
 func (s *RTPSession) parseReceiverReport(receiverReport *rtcp.ReceiverReport, now time.Time, ssrc uint32) {
 	receptionReport := rtcp.ReceptionReport{}
-	s.parseReceptionReport(&receptionReport, now)
 
+	s.parseReceptionReport(&receptionReport, now)
 	*receiverReport = rtcp.ReceiverReport{
 		SSRC:    ssrc,
 		Reports: []rtcp.ReceptionReport{receptionReport},
@@ -297,13 +319,10 @@ func (s *RTPSession) parseReceiverReport(receiverReport *rtcp.ReceiverReport, no
 }
 
 func (s *RTPSession) parseSenderReport(senderReport *rtcp.SenderReport, now time.Time, ssrc uint32) {
-	receptionReport := rtcp.ReceptionReport{}
-	s.parseReceptionReport(&receptionReport, now)
 
 	// Write stats
 	writeStats := &s.writeStats
 	rtpTimestampOffset := now.Sub(writeStats.lastPacketTime).Seconds() * float64(s.codec.sampleRate)
-	fmt.Println(writeStats.lastPacketTimestamp, rtpTimestampOffset)
 	// Same as asterisk
 	// Sender Report should contain Receiver Report if user acts as sender and receiver
 	// Otherwise on Read we should generate only receiver Report
@@ -313,7 +332,12 @@ func (s *RTPSession) parseSenderReport(senderReport *rtcp.SenderReport, now time
 		RTPTime:     writeStats.lastPacketTimestamp + uint32(rtpTimestampOffset),
 		PacketCount: writeStats.PacketsCount,
 		OctetCount:  writeStats.OctetCount,
-		Reports:     []rtcp.ReceptionReport{receptionReport},
+	}
+
+	if s.readStats.SSRC > 0 {
+		receptionReport := rtcp.ReceptionReport{}
+		s.parseReceptionReport(&receptionReport, now)
+		senderReport.Reports = []rtcp.ReceptionReport{receptionReport}
 	}
 }
 

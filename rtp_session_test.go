@@ -110,9 +110,10 @@ func TestRTPSessionReading(t *testing.T) {
 
 	// Now make a sender report
 	senderReport := rtcp.SenderReport{}
-	rtpSessRead.parseSenderReport(&senderReport, time.Now(), rtpReader.lastSSRC)
+	rtpSessRead.parseSenderReport(&senderReport, time.Now(), 1234)
 
 	recReport := senderReport.Reports[0]
+	assert.Equal(t, uint32(1234), senderReport.SSRC)
 	assert.Equal(t, lostPackets, int(recReport.TotalLost))
 	// firstpkt + expected pkts = last seq numb
 	assert.Equal(t, int(rtpSessRead.readStats.FirstPktSequenceNumber)+expectedPkts, int(recReport.LastSequenceNumber))
@@ -174,6 +175,7 @@ func TestRTPSessionWriting(t *testing.T) {
 	rtpSessWrite.parseSenderReport(&senderReport, now, rtpWriter.SSRC)
 
 	N := len(rtpStream)
+	assert.Equal(t, rtpWriter.SSRC, senderReport.SSRC)
 	assert.Equal(t, uint32(N), senderReport.PacketCount, "packets=%d ", senderReport.PacketCount)
 	assert.Equal(t, uint32(N)*160, senderReport.OctetCount, "octes=%d", senderReport.OctetCount)
 	assert.LessOrEqual(t, rtpWriter.initTimestamp+uint32(N-1)*160, senderReport.RTPTime, "RTPTime=%d", int(senderReport.RTPTime))

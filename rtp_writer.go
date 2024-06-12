@@ -41,6 +41,8 @@ type RTPWriter struct {
 // - Padding and encryyption
 func NewRTPWriter(sess *RTPSession) *RTPWriter {
 	w := NewRTPWriterMedia(sess.Sess)
+	// We need to add our SSRC due to sender report, which can be empty until data comes
+	sess.writeStats.SSRC = w.SSRC
 	w.RTPSession = sess
 	return w
 }

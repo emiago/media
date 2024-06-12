@@ -10,10 +10,21 @@ It has APIs for creating and running protocols like SDP, RTP, RTCP.
 
 Library is currently focused only to provide VOIP needs and removing complexity. 
 As with [sipgo](https://github.com/emiago/sipgo) focus is to provide minimal GC hits and latency.
- 
+
 
 ### Tools using this
 - [gophone](https://github.com/emiago/gophone)
+
+Features:
+- [x] Simple SDP build with formats alaw,ulaw,dtmf
+- [x] RTP/RTCP receiving and logging
+- [x] Extendable MediaSession handling for RTP/RTCP handling (ex microphone,speaker)
+- [x] DTMF encoder, decoder via RFC4733
+- [x] Minimal SDP package for audio
+- [ ] Media Session, RTP Session handling
+- [ ] RTCP monitoring
+- [ ] SDP codec fields manipulating
+- [ ] ... who knows
 
 
 ## IO flow
