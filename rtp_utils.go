@@ -10,24 +10,38 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+var ntpEpochOffset int64 = 2208988800
+
 func GetCurrentNTPTimestamp() uint64 {
-	ntpEpochOffset := 2208988800 // Offset from Unix epoch (January 1, 1970) to NTP epoch (January 1, 1900)
-	currentTime := time.Now().Unix() + int64(ntpEpochOffset)
-
-	return uint64(currentTime)
+	now := time.Now()
+	return NTPTimestamp(now)
 }
 
-func NTPTimestamp(now time.Time) uint64 {
-	ntpEpochOffset := 2208988800 // Offset from Unix epoch (January 1, 1970) to NTP epoch (January 1, 1900)
-	currentTime := now.Unix() + int64(ntpEpochOffset)
+func NTPTimestamp(t time.Time) uint64 {
+	// Number of seconds since NTP epoch
+	seconds := t.Unix() + ntpEpochOffset
 
-	return uint64(currentTime)
+	// Fractional part
+	nanos := t.Nanosecond()
+	frac := (float64(nanos) / 1e9) * (1 << 32)
+
+	// NTP timestamp is 32bit second | 32 bit fractional
+	ntpTimestamp := (uint64(seconds) << 32) | uint64(frac)
+
+	return ntpTimestamp
 }
 
-func NTPToTime(ntp uint64) time.Time {
-	var ntpEpochOffset uint64 = 2208988800 // Offset from Unix epoch (January 1, 1970) to NTP epoch (January 1, 1900)
-	unixSec := ntp - ntpEpochOffset
-	return time.Unix(int64(unixSec), 0)
+func NTPToTime(ntpTimestamp uint64) time.Time {
+	// NTP timestamp is 32bit second | 32 bit fractional
+	seconds := int64(ntpTimestamp >> 32)                 // Upper 32 bits
+	frac := float64(ntpTimestamp&0xFFFFFFFF) / (1 << 32) // Lower 32 bits
+
+	// Convert NTP seconds to Unix seconds
+	unixSeconds := seconds - ntpEpochOffset
+	nsec := int64(frac * 1e9)
+
+	// Create a time.Time object
+	return time.Unix(unixSeconds, nsec)
 }
 
 func SendDummyRTP(rtpConn *net.UDPConn, raddr net.Addr) {

@@ -255,9 +255,14 @@ func (s *RTPSession) readReceptionReport(rr rtcp.ReceptionReport, now time.Time)
 	// compute jitter
 	// https://tools.ietf.org/html/rfc3550#page-39
 	// Round trip time
-	rtt := now.Sub(NTPToTime(uint64(rr.LastSenderReport)))
-	rtt -= time.Duration(rr.Delay) * time.Second / 65356
-	s.readStats.RTT = rtt
+	if rr.LastSenderReport != 0 {
+		// LSR is 32 bit middle
+		now32 := uint32(NTPTimestamp(now) >> 16)
+		nowNTP := NTPToTime(uint64(now32) << 16)
+		lsrTime := NTPToTime(uint64(rr.LastSenderReport) << 16)
+
+		s.readStats.RTT = nowNTP.Sub(lsrTime) - time.Duration(float64(rr.Delay)/65356*float64(time.Second))
+	}
 	// used to calc fraction lost
 	s.readStats.lastReceptionReportSeqNum = rr.LastSequenceNumber
 }

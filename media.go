@@ -273,6 +273,8 @@ func (s *MediaSession) UpdateDestinationSDP(sdpReceived []byte) error {
 	}
 
 	// TODO fix race problem, but it is rare this to happen
+	// addr := atomic.Pointer[net.UDPAddr]{}
+	// addr.Store()
 	s.Raddr.IP = ci.IP
 	s.Raddr.Port = md.Port
 
