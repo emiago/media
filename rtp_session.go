@@ -199,15 +199,17 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 }
 
 // Monitor starts reading RTCP and monitoring media quality
-func (s *RTPSession) Monitor() {
-	go s.monitorRTCP()
+func (s *RTPSession) Monitor() error {
+	return s.readRTCP()
 }
 
-func (s *RTPSession) monitorRTCP() {
-	sess := s.Sess
-	if err := s.readRTCP(); err != nil {
-		sess.log.Error().Err(err).Msg("RTP session RTCP reader stopped with error")
-	}
+func (s *RTPSession) MonitorBackground() {
+	go func() {
+		sess := s.Sess
+		if err := s.readRTCP(); err != nil {
+			sess.log.Error().Err(err).Msg("RTP session RTCP reader stopped with error")
+		}
+	}()
 }
 
 func (s *RTPSession) readRTCP() error {

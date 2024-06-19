@@ -235,9 +235,5 @@ func TestRTPSessionClose(t *testing.T) {
 		rtpSess.Close()
 	}()
 	err = rtpSess.readRTCP()
-
-	if err, ok := err.(net.Error); ok && err.Timeout() {
-		return
-	}
-	t.Error("Not timeout error")
+	require.NoError(t, err)
 }
