@@ -67,6 +67,33 @@ func NewMediaSession(laddr *net.UDPAddr) (s *MediaSession, e error) {
 	return s, nil
 }
 
+// Fork is special call to be used in case when there is session update
+// It preserves pointer to same conneciton but rest is remobed
+// After this call it still expected that
+func (s *MediaSession) Fork() *MediaSession {
+	cp := MediaSession{
+		Laddr:    s.Laddr, // TODO clone it although it is read only
+		rtpConn:  s.rtpConn,
+		rtcpConn: s.rtcpConn,
+
+		Formats: sdp.Formats{
+			sdp.FORMAT_TYPE_ULAW, sdp.FORMAT_TYPE_ALAW,
+		},
+		Mode: sdp.ModeSendrecv,
+	}
+	return &cp
+}
+
+func (s *MediaSession) Close() {
+	if s.rtcpConn != nil {
+		s.rtcpConn.Close()
+	}
+
+	if s.rtpConn != nil {
+		s.rtpConn.Close()
+	}
+}
+
 func (s *MediaSession) SetLogger(log zerolog.Logger) {
 	s.log = log
 }
@@ -196,89 +223,6 @@ func (s *MediaSession) listenRTPandRTCP(laddr *net.UDPAddr) error {
 
 	// Update laddr as it can be empheral
 	s.Laddr = laddr
-	return nil
-}
-
-func (s *MediaSession) createListeners2(laddr *net.UDPAddr) error {
-	var err error
-
-	if laddr.Port == 0 && RTPPortStart > 0 && RTPPortEnd > RTPPortStart {
-		// Get next available port
-		port := RTPPortStart + int(rtpPortOffset.Load())
-		for ; port < RTPPortEnd; port += 2 {
-			rtpconn, err := net.ListenUDP("udp", &net.UDPAddr{IP: laddr.IP, Port: port})
-			if err != nil {
-				continue
-			}
-			rtpconn.Close()
-
-			rtpcconn, err := net.ListenUDP("udp", &net.UDPAddr{IP: laddr.IP, Port: port + 1})
-			if err != nil {
-				continue
-			}
-			rtpcconn.Close()
-			laddr.Port = port
-			break
-		}
-		if laddr.Port == 0 {
-			return fmt.Errorf("No available ports in range %d:%d", RTPPortStart, RTPPortEnd)
-		}
-		// Add some offset so that we use more from range
-		offset := (port + 2 - RTPPortStart) % (RTPPortEnd - RTPPortStart)
-		rtpPortOffset.Store(int32(offset)) // Reset to zero with module
-	}
-
-	// Without RTP port ranges this can fail on RTCP to be reused in racy conditions
-	s.rtpConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: laddr.IP, Port: laddr.Port})
-	if err != nil {
-		return err
-	}
-	laddr = s.rtpConn.LocalAddr().(*net.UDPAddr)
-
-	s.rtcpConn, err = net.ListenUDP("udp", &net.UDPAddr{IP: laddr.IP, Port: laddr.Port + 1})
-	if err != nil {
-		return err
-	}
-
-	// Update laddr as it can be empheral
-	s.Laddr = laddr
-	return nil
-}
-
-func (s *MediaSession) Close() {
-	if s.rtcpConn != nil {
-		s.rtcpConn.Close()
-	}
-
-	if s.rtpConn != nil {
-		s.rtpConn.Close()
-	}
-}
-
-func (s *MediaSession) UpdateDestinationSDP(sdpReceived []byte) error {
-	sd := sdp.SessionDescription{}
-	if err := sdp.Unmarshal(sdpReceived, &sd); err != nil {
-		// p.log.Debug().Err(err).Msgf("Fail to parse SDP\n%q", string(r.Body()))
-		return fmt.Errorf("fail to parse received SDP: %w", err)
-	}
-
-	md, err := sd.MediaDescription("audio")
-	if err != nil {
-		return err
-	}
-
-	ci, err := sd.ConnectionInformation()
-	if err != nil {
-		return err
-	}
-
-	// TODO fix race problem, but it is rare this to happen
-	// addr := atomic.Pointer[net.UDPAddr]{}
-	// addr.Store()
-	s.Raddr.IP = ci.IP
-	s.Raddr.Port = md.Port
-
-	s.updateFormats(md.Formats)
 	return nil
 }
 

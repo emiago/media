@@ -32,20 +32,19 @@ type RTPSession struct {
 	// Keep pointers at top to reduce GC
 	Sess *MediaSession
 
+	rtcpMU sync.Mutex
+	// All below fields should not be updated without rtcpMu Lock
 	rtcpTicker *time.Ticker
-	rtcpMU     sync.Mutex
-
 	readStats  RTPReadStats
 	writeStats RTPWriteStats
 
-	// RTP codec
-	codec codec
 	// Experimental
 	// this intercepts reading or writing rtcp packet. Allows manipulation
 	OnReadRTCP  func(pkt rtcp.Packet, rtpStats RTPReadStats)
 	OnWriteRTCP func(pkt rtcp.Packet, rtpStats RTPWriteStats)
 }
 
+// Some of fields here are exported (as readonly) intentionally
 type RTPReadStats struct {
 	SSRC                   uint32
 	FirstPktSequenceNumber uint16
@@ -72,10 +71,14 @@ type RTPReadStats struct {
 	RTT time.Duration
 }
 
+// Some of fields here are exported (as readonly) intentionally
 type RTPWriteStats struct {
-	SSRC                uint32
+	SSRC uint32
+
 	lastPacketTime      time.Time
 	lastPacketTimestamp uint32
+	sampleRate          uint32
+
 	// RTCP stats
 	PacketsCount uint32
 	OctetCount   uint32
@@ -86,22 +89,16 @@ func NewRTPSession(sess *MediaSession) *RTPSession {
 	return &RTPSession{
 		Sess:       sess,
 		rtcpTicker: time.NewTicker(5 * time.Second),
-		codec:      codecFromSession(sess),
 	}
 }
 
 func (s *RTPSession) Close() error {
 	s.rtcpTicker.Stop()
+	// Stop monitor routing
+	err := s.Sess.rtcpConn.SetDeadline(time.Now())
+	// defer s.Sess.rtcpConn.SetDeadline(time.Time{})
 
-	// STOP Media SESS?
-	//s.Reader.Sess.Close()
-
-	return nil
-}
-
-// Monitor starts reading RTCP and monitoring media quality
-func (s *RTPSession) Monitor() {
-	go s.readRTCP()
+	return err
 }
 
 func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
@@ -118,14 +115,18 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 	if stats.SSRC != readPkt.SSRC {
 		// For now we will reset all our stats.
 		// We expect that SSRC only changed but MULTI RTP stream per one session are not fully supported!
+		codec := codecFromPayloadType(readPkt.PayloadType)
+
 		*stats = RTPReadStats{
 			SSRC:                   readPkt.SSRC,
 			FirstPktSequenceNumber: readPkt.SequenceNumber,
+
+			sampleRate: codec.sampleRate,
 		}
 		stats.lastSeq.InitSeq(readPkt.SequenceNumber)
 	} else {
 		stats.lastSeq.UpdateSeq(readPkt.SequenceNumber)
-		sampleRate := s.codec.sampleRate
+		sampleRate := s.readStats.sampleRate
 
 		// Jitter here will mostly be incorrect as Reading RTP can be faster slower
 		// and not actually dictated by sampling (clock)
@@ -174,8 +175,11 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	writeStats := &s.writeStats
 	// For now we only track latest SSRC
 	if writeStats.SSRC != pkt.SSRC {
+		codec := codecFromPayloadType(pkt.PayloadType)
+
 		*writeStats = RTPWriteStats{
-			SSRC: pkt.SSRC,
+			SSRC:       pkt.SSRC,
+			sampleRate: codec.sampleRate,
 		}
 	}
 
@@ -194,19 +198,37 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	return nil
 }
 
-func (s *RTPSession) readRTCP() {
+// Monitor starts reading RTCP and monitoring media quality
+func (s *RTPSession) Monitor() {
+	go s.monitorRTCP()
+}
+
+func (s *RTPSession) monitorRTCP() {
 	sess := s.Sess
-	buf := make([]rtcp.Packet, 5) // What would be more correct value?
+	if err := s.readRTCP(); err != nil {
+		sess.log.Error().Err(err).Msg("RTP session RTCP reader stopped with error")
+	}
+}
+
+func (s *RTPSession) readRTCP() error {
+	sess := s.Sess
+	buf := make([]rtcp.Packet, 5)              // What would be more correct value?
+	sess.rtcpConn.SetReadDeadline(time.Time{}) // For now make sure we are not getting timeout
 	for {
 		n, err := sess.ReadRTCP(buf)
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				sess.log.Debug().Msg("RTP session RTCP reader exit")
-				return
+				return nil
 			}
 
-			sess.log.Error().Err(err).Msg("RTP session RTCP reader stopped with error")
-			return
+			if e, ok := err.(net.Error); ok && e.Timeout() {
+				// Must be  closed
+				sess.log.Debug().Msg("RTP session RTCP closed with timeout")
+				return nil
+			}
+
+			return err
 		}
 
 		for _, pkt := range buf[:n] {
@@ -327,7 +349,7 @@ func (s *RTPSession) parseSenderReport(senderReport *rtcp.SenderReport, now time
 
 	// Write stats
 	writeStats := &s.writeStats
-	rtpTimestampOffset := now.Sub(writeStats.lastPacketTime).Seconds() * float64(s.codec.sampleRate)
+	rtpTimestampOffset := now.Sub(writeStats.lastPacketTime).Seconds() * float64(s.writeStats.sampleRate)
 	// Same as asterisk
 	// Sender Report should contain Receiver Report if user acts as sender and receiver
 	// Otherwise on Read we should generate only receiver Report

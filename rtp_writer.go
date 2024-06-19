@@ -2,6 +2,8 @@ package media
 
 import (
 	"math/rand"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/rtp"
@@ -26,6 +28,7 @@ type RTPWriter struct {
 	// Internals
 	// clock rate is decided based on media
 	sampleRateTimestamp uint32
+	closed              atomic.Bool
 	clockTicker         *time.Ticker
 	seqWriter           RTPExtendedSequenceNumber
 	nextTimestamp       uint32
@@ -38,11 +41,13 @@ type RTPWriter struct {
 // - allow different clock rate
 // - CSRC contribution source
 // - Silence detection and marker set
-// - Padding and encryyption
+// updateClockRate- Padding and encryyption
 func NewRTPWriter(sess *RTPSession) *RTPWriter {
 	w := NewRTPWriterMedia(sess.Sess)
 	// We need to add our SSRC due to sender report, which can be empty until data comes
+	// It is expected that nothing travels yet through rtp session
 	sess.writeStats.SSRC = w.SSRC
+	sess.writeStats.sampleRate = w.SampleRate
 	w.RTPSession = sess
 	return w
 }
@@ -127,4 +132,28 @@ func (p *RTPWriter) WriteSamples(payload []byte, clockRateTimestamp uint32, mark
 
 	err := p.Sess.WriteRTP(&pkt)
 	return len(pkt.Payload), err
+}
+
+// Experimental
+//
+// RTPWriterConcurent allows updating RTPSession on RTPWriter and more (in case of regonation)
+type RTPWriterConcurent struct {
+	*RTPWriter
+	mu sync.Mutex
+}
+
+func (w *RTPWriterConcurent) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.RTPWriter.Write(b)
+}
+
+func (w *RTPWriterConcurent) SetRTPSession(rtpSess *RTPSession) {
+	codec := codecFromSession(rtpSess.Sess)
+	w.mu.Lock()
+	w.RTPWriter.RTPSession = rtpSess
+	w.PayloadType = codec.payloadType
+	w.SampleRate = codec.sampleRate
+	w.updateClockRate(codec)
+	w.mu.Unlock()
 }

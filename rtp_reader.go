@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 
-	"github.com/emiago/media/sdp"
 	"github.com/pion/rtp"
 )
 
@@ -44,19 +44,11 @@ func NewRTPReader(sess *RTPSession) *RTPReader {
 // NewRTPWriterMedia is left for backward compability. It does not add RTCP reporting
 // It talks directly to network
 func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
-	f := sess.Formats[0]
-	var payloadType uint8 = sdp.FormatNumeric(f)
-	switch f {
-	case sdp.FORMAT_TYPE_ALAW:
-	case sdp.FORMAT_TYPE_ULAW:
-		// TODO more support
-	default:
-		sess.log.Warn().Str("format", f).Msg("Unsupported format. Using default clock rate")
-	}
+	codec := codecFromSession(sess)
 
 	w := RTPReader{
 		Sess:        sess,
-		PayloadType: payloadType,
+		PayloadType: codec.payloadType,
 		OnRTP:       func(pkt *rtp.Packet) {},
 
 		seqReader:     RTPExtendedSequenceNumber{},
@@ -155,4 +147,26 @@ func (r *RTPReader) readPayload(b []byte, payload []byte) int {
 		r.unread = 0
 	}
 	return n
+}
+
+// Experimental
+//
+// RTPReaderConcurent allows updating RTPSession on RTPWriter and more (in case of regonation)
+type RTPReaderConcurent struct {
+	*RTPReader
+	mu sync.Mutex
+}
+
+func (r *RTPReaderConcurent) Read(b []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.RTPReader.Read(b)
+}
+
+func (r *RTPReaderConcurent) SetRTPSession(rtpSess *RTPSession) {
+	codec := codecFromSession(rtpSess.Sess)
+	r.mu.Lock()
+	r.RTPSession = rtpSess
+	r.PayloadType = codec.payloadType
+	r.mu.Unlock()
 }

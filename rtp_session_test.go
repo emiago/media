@@ -12,6 +12,7 @@ import (
 	"github.com/pion/rtcp"
 	"github.com/rs/zerolog/log"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func fakeSession(lport int, rport int, rtpReader io.Reader, rtpWriter io.Writer, rtcpReader io.Reader, rtcpWriter io.Writer) *RTPSession {
@@ -206,3 +207,37 @@ func TestRTPSessionWriting(t *testing.T) {
 // 	rtcpWriter.Write(data)
 
 // }
+
+func TestRTPSessionClose(t *testing.T) {
+	sess, err := NewMediaSession(&net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	require.NoError(t, err)
+
+	rtpSess := NewRTPSession(sess)
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		rtpSess.readRTCP()
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+	rtpSess.Close()
+
+	select {
+	case <-time.After(3 * time.Second):
+		t.Error("RTP Session did not close RTCP")
+		return
+	case <-closed:
+	}
+
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		rtpSess.Close()
+	}()
+	err = rtpSess.readRTCP()
+
+	if err, ok := err.(net.Error); ok && err.Timeout() {
+		return
+	}
+	t.Error("Not timeout error")
+}

@@ -2,6 +2,7 @@ package media
 
 import (
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/emiago/media/sdp"
@@ -124,6 +125,25 @@ func codecFromSession(s *MediaSession) codec {
 	case sdp.FORMAT_TYPE_ULAW:
 	default:
 		s.log.Warn().Str("format", f).Msg("Unsupported format. Using default clock rate")
+	}
+	return c
+}
+
+func codecFromPayloadType(payloadType uint8) codec {
+	c := codec{
+		payloadType: uint8(payloadType),
+		sampleRate:  8000,
+		sampleDur:   20 * time.Millisecond,
+	}
+
+	f := strconv.Itoa(int(payloadType))
+	switch f {
+	case sdp.FORMAT_TYPE_ALAW:
+	case sdp.FORMAT_TYPE_ULAW:
+	default:
+		// For now
+		log.Warn().Str("format", f).Msg("Unsupported format. Using default clock rate")
+
 	}
 	return c
 }
