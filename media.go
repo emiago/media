@@ -379,7 +379,7 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 		return err
 	}
 
-	return m.writeRTCP(data)
+	return m.WriteRTCPRaw(data)
 }
 
 func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) error {
@@ -394,10 +394,10 @@ func (m *MediaSession) WriteRTCPs(pkts []rtcp.Packet) error {
 		return err
 	}
 
-	return m.writeRTCP(data)
+	return m.WriteRTCPRaw(data)
 }
 
-func (m *MediaSession) writeRTCP(data []byte) error {
+func (m *MediaSession) WriteRTCPRaw(data []byte) error {
 	var err error
 	var n int
 
