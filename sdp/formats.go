@@ -3,8 +3,9 @@ package sdp
 import "strconv"
 
 const (
-	FORMAT_TYPE_ULAW = "0"
-	FORMAT_TYPE_ALAW = "8"
+	FORMAT_TYPE_ULAW            = "0"
+	FORMAT_TYPE_ALAW            = "8"
+	FORMAT_TYPE_TELEPHONE_EVENT = "101"
 )
 
 type Formats []string

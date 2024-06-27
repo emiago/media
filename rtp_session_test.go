@@ -235,5 +235,24 @@ func TestRTPSessionClose(t *testing.T) {
 		rtpSess.Close()
 	}()
 	err = rtpSess.readRTCP()
-	require.NoError(t, err)
+	neterr, ok := err.(net.Error)
+	require.True(t, ok)
+	require.True(t, neterr.Timeout())
+}
+
+func TestRTTCalc(t *testing.T) {
+	now := time.Now()
+	lsrTime := now.Add(-6 * time.Second)
+	lsrNTP := NTPTimestamp(lsrTime)
+	lsr := uint32(lsrNTP >> 16)
+
+	dur, skewed := calcRTT(now, lsr, 0)
+	assert.False(t, skewed)
+	assert.Equal(t, 6*time.Second, dur)
+
+	dur, skewed = calcRTT(now, lsr, 5*65356) // Delay was 5 second
+	assert.False(t, skewed)
+	// Due to dividing this can not be exact
+	assert.GreaterOrEqual(t, dur, 1*time.Second)
+	assert.LessOrEqual(t, dur, 1*time.Second+20*time.Millisecond)
 }

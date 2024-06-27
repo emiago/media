@@ -41,7 +41,9 @@ func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode Mo
 			formatsMap = append(formatsMap, "a=rtpmap:0 PCMU/8000")
 		case "8":
 			formatsMap = append(formatsMap, "a=rtpmap:8 PCMA/8000")
-
+		case "101":
+			formatsMap = append(formatsMap, "a=rtpmap:101 telephone-event/8000")
+			formatsMap = append(formatsMap, "a=fmtp:101 0-16")
 			// TODO add more here
 		}
 	}
@@ -53,14 +55,14 @@ func GenerateForAudio(originIP net.IP, connectionIP net.IP, rtpPort int, mode Mo
 		// "b=AS:84",
 		fmt.Sprintf("c=IN IP4 %s", connectionIP),
 		"t=0 0",
-		fmt.Sprintf("m=audio %d RTP/AVP %s", rtpPort, strings.Join(fmts, " ")+" 101"),
+		fmt.Sprintf("m=audio %d RTP/AVP %s", rtpPort, strings.Join(fmts, " ")),
 		"a=" + string(mode),
 		// "a=ssrc:111222 cname:user@example.com",
 		// "a=rtpmap:0 PCMU/8000",
 		// "a=rtpmap:8 PCMA/8000",
 		// THIS is FOR DTMF
-		"a=rtpmap:101 telephone-event/8000",
-		"a=fmtp:101 0-16",
+		// "a=rtpmap:101 telephone-event/8000",
+		// "a=fmtp:101 0-16",
 		// "",
 		// "a=rtpmap:120 telephone-event/16000",
 		// "a=fmtp:120 0-16",

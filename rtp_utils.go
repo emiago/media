@@ -34,8 +34,8 @@ func NTPTimestamp(t time.Time) uint64 {
 
 func NTPToTime(ntpTimestamp uint64) time.Time {
 	// NTP timestamp is 32bit second | 32 bit fractional
-	seconds := int64(ntpTimestamp >> 32)                 // Upper 32 bits
-	frac := float64(ntpTimestamp&0xFFFFFFFF) / (1 << 32) // Lower 32 bits
+	seconds := int64(ntpTimestamp >> 32)                         // Upper 32 bits
+	frac := float64(ntpTimestamp&0x00000000FFFFFFFF) / (1 << 32) // Lower 32 bits
 
 	// Convert NTP seconds to Unix seconds
 	unixSeconds := seconds - ntpEpochOffset

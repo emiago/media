@@ -102,8 +102,20 @@ func (s *RTPSession) Close() error {
 }
 
 func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
-	if err := s.Sess.ReadRTP(b, readPkt); err != nil {
-		return err
+	for {
+		if err := s.Sess.ReadRTP(b, readPkt); err != nil {
+			return err
+		}
+
+		// Validate pkt. Check is it keep alive
+		if readPkt.Version == 0 {
+			continue
+		}
+		if len(readPkt.Payload) == 0 {
+			continue
+		}
+
+		break
 	}
 
 	s.rtcpMU.Lock()
@@ -153,13 +165,13 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 
 	s.rtcpMU.Unlock()
 
-	select {
-	case t := <-s.rtcpTicker.C:
-		s.writeRTCP(t)
-		// stats.IntervalFirstPktSeqNum = 0
-		// stats.IntervalTotalPackets = 0
-	default:
-	}
+	// select {
+	// case t := <-s.rtcpTicker.C:
+	// 	s.writeRTCP(t)
+	// 	// stats.IntervalFirstPktSeqNum = 0
+	// 	// stats.IntervalTotalPackets = 0
+	// default:
+	// }
 
 	return nil
 }
@@ -190,24 +202,68 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 
 	s.rtcpMU.Unlock()
 
-	select {
-	case t := <-s.rtcpTicker.C:
-		s.writeRTCP(t)
-	default:
-	}
+	// select {
+	// case t := <-s.rtcpTicker.C:
+	// 	s.writeRTCP(t)
+	// default:
+	// }
 	return nil
 }
 
 // Monitor starts reading RTCP and monitoring media quality
 func (s *RTPSession) Monitor() error {
-	return s.readRTCP()
+	errchan := make(chan error)
+	go func() {
+		errchan <- s.readRTCP()
+	}()
+
+	var err error
+	for {
+		now := <-s.rtcpTicker.C
+		if err = s.writeRTCP(now); err != nil {
+			break
+		}
+	}
+	return errors.Join(err, <-errchan)
 }
 
+// MonitorBackground is helper to keep monitoring in background
 func (s *RTPSession) MonitorBackground() {
 	go func() {
 		sess := s.Sess
+		sess.log.Debug().Msg("RTCP reader started")
 		if err := s.readRTCP(); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+				sess.log.Debug().Msg("RTP session RTCP reader exit")
+				return
+			}
+
+			if e, ok := err.(net.Error); ok && e.Timeout() {
+				// Must be  closed
+				sess.log.Debug().Msg("RTP session RTCP closed with timeout")
+				return
+			}
 			sess.log.Error().Err(err).Msg("RTP session RTCP reader stopped with error")
+		}
+	}()
+
+	go func() {
+		sess := s.Sess
+		sess.log.Debug().Msg("RTCP writer started")
+		for {
+			now, open := <-s.rtcpTicker.C
+			if !open {
+				sess.log.Debug().Msg("RTCP writer closed")
+				return
+			}
+			if err := s.writeRTCP(now); err != nil {
+				if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+					sess.log.Debug().Msg("RTP session RTCP writer exit")
+					return
+				}
+				sess.log.Error().Err(err).Msg("RTP session RTCP writer stopped with error")
+				return
+			}
 		}
 	}()
 }
@@ -219,17 +275,6 @@ func (s *RTPSession) readRTCP() error {
 	for {
 		n, err := sess.ReadRTCP(buf)
 		if err != nil {
-			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
-				sess.log.Debug().Msg("RTP session RTCP reader exit")
-				return nil
-			}
-
-			if e, ok := err.(net.Error); ok && e.Timeout() {
-				// Must be  closed
-				sess.log.Debug().Msg("RTP session RTCP closed with timeout")
-				return nil
-			}
-
 			return err
 		}
 
@@ -253,6 +298,11 @@ func (s *RTPSession) readRTCPPacket(pkt rtcp.Packet) {
 
 	switch p := pkt.(type) {
 	case *rtcp.SenderReport:
+		// It can happen that we have nothing received from RTP till now
+		if s.readStats.SSRC == 0 {
+			s.readStats.SSRC = p.SSRC
+		}
+
 		s.readStats.lastSenderReportNTP = p.NTPTime
 		s.readStats.lastSenderReportRecvTime = now
 
@@ -280,18 +330,18 @@ func (s *RTPSession) readReceptionReport(rr rtcp.ReceptionReport, now time.Time)
 	// https://tools.ietf.org/html/rfc3550#page-39
 	// Round trip time
 	if rr.LastSenderReport != 0 {
-		// LSR is 32 bit middle
-		now32 := uint32(NTPTimestamp(now) >> 16)
-		nowNTP := NTPToTime(uint64(now32) << 16)
-		lsrTime := NTPToTime(uint64(rr.LastSenderReport) << 16)
-
-		s.readStats.RTT = nowNTP.Sub(lsrTime) - time.Duration(float64(rr.Delay)/65356*float64(time.Second))
+		var skewed bool
+		s.readStats.RTT, skewed = calcRTT(now, rr.LastSenderReport, rr.Delay)
+		if skewed {
+			s.Sess.log.Warn().Uint32("ssrc", rr.SSRC).Str("rtt", s.readStats.RTT.String()).Msg("Internal RTCP clock skew detected")
+		}
 	}
 	// used to calc fraction lost
 	s.readStats.lastReceptionReportSeqNum = rr.LastSequenceNumber
 }
 
-func (s *RTPSession) writeRTCP(now time.Time) {
+func (s *RTPSession) writeRTCP(now time.Time) error {
+
 	var pkt rtcp.Packet
 
 	// If there is no writer in session (a=recvonly) then generate only receiver report
@@ -300,7 +350,7 @@ func (s *RTPSession) writeRTCP(now time.Time) {
 	if s.Sess.Mode == sdp.ModeRecvonly {
 		if s.readStats.SSRC == 0 {
 			s.rtcpMU.Unlock()
-			return
+			return nil
 		}
 
 		rr := rtcp.ReceiverReport{}
@@ -310,7 +360,7 @@ func (s *RTPSession) writeRTCP(now time.Time) {
 	} else {
 		if s.writeStats.SSRC == 0 {
 			s.rtcpMU.Unlock()
-			return
+			return nil
 		}
 
 		sr := rtcp.SenderReport{}
@@ -332,9 +382,7 @@ func (s *RTPSession) writeRTCP(now time.Time) {
 		s.rtcpMU.Unlock()
 	}
 
-	if err := s.Sess.WriteRTCP(pkt); err != nil {
-		s.Sess.log.Error().Err(err).Msg("Failed to write RTCP")
-	}
+	return s.Sess.WriteRTCP(pkt)
 }
 
 func (s *RTPSession) parseReceiverReport(receiverReport *rtcp.ReceiverReport, now time.Time, ssrc uint32) {
@@ -388,7 +436,13 @@ func (s *RTPSession) parseReceptionReport(receptionReport *rtcp.ReceptionReport,
 
 	// interarrival jitter
 	// network transit time
+	// Assert
+
 	lastReceivedSenderReportTime := readStats.lastSenderReportRecvTime
+	if lastReceivedSenderReportTime.IsZero() {
+		panic("sender report time is zero")
+	}
+
 	delay := now.Sub(lastReceivedSenderReportTime)
 	// TODO handle multiple SSRC
 	*receptionReport = rtcp.ReceptionReport{
@@ -404,4 +458,18 @@ func (s *RTPSession) parseReceptionReport(receptionReport *rtcp.ReceptionReport,
 
 func FractionLostFloat(f uint8) float64 {
 	return float64(f) / 256
+}
+
+func calcRTT(now time.Time, lastSenderReport uint32, delaySenderReport uint32) (rtt time.Duration, skewed bool) {
+	nowNTP := NTPTimestamp(now)
+	now32 := uint32(nowNTP >> 16)
+
+	rtt32 := now32 - lastSenderReport - delaySenderReport
+	skewed = now32-delaySenderReport < lastSenderReport
+
+	secs := rtt32 & 0xFFFF0000 >> 16           // higher 16 bits
+	fracs := float64(rtt32&0x0000FFFF) / 65356 // lower 16 bits
+	rtt = time.Duration(secs)*time.Second + time.Duration(fracs*float64(time.Second))
+
+	return
 }

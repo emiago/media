@@ -52,7 +52,7 @@ type MediaSession struct {
 func NewMediaSession(laddr *net.UDPAddr) (s *MediaSession, e error) {
 	s = &MediaSession{
 		Formats: sdp.Formats{
-			sdp.FORMAT_TYPE_ULAW, sdp.FORMAT_TYPE_ALAW,
+			sdp.FORMAT_TYPE_ULAW, sdp.FORMAT_TYPE_ALAW, sdp.FORMAT_TYPE_TELEPHONE_EVENT,
 		},
 		Laddr: laddr,
 		Mode:  sdp.ModeSendrecv,
@@ -77,7 +77,7 @@ func (s *MediaSession) Fork() *MediaSession {
 		rtcpConn: s.rtcpConn,
 
 		Formats: sdp.Formats{
-			sdp.FORMAT_TYPE_ULAW, sdp.FORMAT_TYPE_ALAW,
+			sdp.FORMAT_TYPE_ULAW, sdp.FORMAT_TYPE_ALAW, sdp.FORMAT_TYPE_TELEPHONE_EVENT,
 		},
 		Mode: sdp.ModeSendrecv,
 	}
@@ -310,12 +310,7 @@ func (m *MediaSession) ReadRTCP(pkts []rtcp.Packet) (n int, err error) {
 
 	if RTCPDebug {
 		for _, p := range pkts[:n] {
-			if s, ok := p.(fmt.Stringer); ok {
-				m.log.Debug().Msgf("RTCP read:\n%s", s.String())
-				continue
-			}
-			log.Debug().Interface("data", p).
-				Msg("RTCP read (Unknown):\n%s")
+			m.log.Debug().Msgf("RTCP read:\n%s", stringRTCP(p))
 		}
 	}
 	return n, err
@@ -369,9 +364,7 @@ func (m *MediaSession) WriteRTPRaw(data []byte) (n int, err error) {
 
 func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 	if RTCPDebug {
-		if sr, ok := p.(fmt.Stringer); ok {
-			m.log.Debug().Msgf("RTCP write: \n%s", sr.String())
-		}
+		m.log.Debug().Msgf("RTCP write: \n%s", stringRTCP(p))
 	}
 
 	data, err := p.Marshal()
@@ -379,7 +372,15 @@ func (m *MediaSession) WriteRTCP(p rtcp.Packet) error {
 		return err
 	}
 
-	return m.WriteRTCPRaw(data)
+	n, err := m.WriteRTCPRaw(data)
+	if err != nil {
+		return err
+	}
+
+	if n != len(data) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func (m *MediaSession) WriteRTCPDeadline(p rtcp.Packet, deadline time.Time) error {
@@ -394,14 +395,7 @@ func (m *MediaSession) WriteRTCPs(pkts []rtcp.Packet) error {
 		return err
 	}
 
-	return m.WriteRTCPRaw(data)
-}
-
-func (m *MediaSession) WriteRTCPRaw(data []byte) error {
-	var err error
-	var n int
-
-	n, err = m.rtcpConn.WriteTo(data, m.rtcpRaddr)
+	n, err := m.WriteRTCPRaw(data)
 	if err != nil {
 		return err
 	}
@@ -410,6 +404,11 @@ func (m *MediaSession) WriteRTCPRaw(data []byte) error {
 		return io.ErrShortWrite
 	}
 	return nil
+}
+
+func (m *MediaSession) WriteRTCPRaw(data []byte) (int, error) {
+	n, err := m.rtcpConn.WriteTo(data, m.rtcpRaddr)
+	return n, err
 }
 
 func selectFormats(sendCodecs []string, recvCodecs []string) []int {
@@ -429,4 +428,35 @@ func selectFormats(sendCodecs []string, recvCodecs []string) []int {
 		}
 	}
 	return formats
+}
+
+func stringRTCP(p rtcp.Packet) string {
+
+	switch r := p.(type) {
+	case *rtcp.SenderReport:
+		out := fmt.Sprintf("SenderReport from %x\n", r.SSRC)
+		out += fmt.Sprintf("\tNTPTime:\t%d\n", r.NTPTime)
+		out += fmt.Sprintf("\tRTPTIme:\t%d\n", r.RTPTime)
+		out += fmt.Sprintf("\tPacketCount:\t%d\n", r.PacketCount)
+		out += fmt.Sprintf("\tOctetCount:\t%d\n", r.OctetCount)
+
+		for _, i := range r.Reports {
+			out += fmt.Sprintf("\tSSRC: %x Lost: %d/%d  LastSeq: %d LSR: %d.%d DLSR: %d\n", i.SSRC, i.FractionLost, i.TotalLost, i.LastSequenceNumber, i.LastSenderReport&0xFFFF0000, i.LastSenderReport&0x0000FFFF, i.Delay)
+		}
+		out += fmt.Sprintf("\tProfile Extension Data: %v\n", r.ProfileExtensions)
+
+		return out
+	case *rtcp.ReceiverReport:
+		out := fmt.Sprintf("ReceiverReport from %x\n", r.SSRC)
+		for _, i := range r.Reports {
+			out += fmt.Sprintf("SSRC: %x\tLost: %d/%d\t LastSeq: %d\tLSR: %d.%d\tDLSR: %d\n", i.SSRC, i.FractionLost, i.TotalLost, i.LastSequenceNumber, i.LastSenderReport&0xFFFF0000, i.LastSenderReport&0x0000FFFF, i.Delay)
+		}
+		out += fmt.Sprintf("\tProfile Extension Data: %v\n", r.ProfileExtensions)
+		return out
+	}
+
+	if s, ok := p.(fmt.Stringer); ok {
+		return s.String()
+	}
+	return "can not stringify"
 }
