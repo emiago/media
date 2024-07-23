@@ -2,10 +2,8 @@ package media
 
 import (
 	"net"
-	"strconv"
 	"time"
 
-	"github.com/emiago/media/sdp"
 	"github.com/pion/rtp"
 	"github.com/pion/rtp/codecs"
 	"github.com/rs/zerolog/log"
@@ -101,49 +99,4 @@ func generateSilentAudioFrame() []byte {
 	}
 
 	return frame
-}
-
-type codec struct {
-	payloadType uint8
-	sampleRate  uint32
-	sampleDur   time.Duration
-}
-
-func (c *codec) sampleTimestamp() uint32 {
-	return uint32(float64(c.sampleRate) * c.sampleDur.Seconds())
-}
-
-func codecFromSession(s *MediaSession) codec {
-	f := s.Formats[0]
-	c := codec{
-		payloadType: sdp.FormatNumeric(f),
-		sampleRate:  8000,
-		sampleDur:   20 * time.Millisecond,
-	}
-	switch f {
-	case sdp.FORMAT_TYPE_ALAW:
-	case sdp.FORMAT_TYPE_ULAW:
-	default:
-		s.log.Warn().Str("format", f).Msg("Unsupported format. Using default clock rate")
-	}
-	return c
-}
-
-func codecFromPayloadType(payloadType uint8) codec {
-	c := codec{
-		payloadType: uint8(payloadType),
-		sampleRate:  8000,
-		sampleDur:   20 * time.Millisecond,
-	}
-
-	f := strconv.Itoa(int(payloadType))
-	switch f {
-	case sdp.FORMAT_TYPE_ALAW:
-	case sdp.FORMAT_TYPE_ULAW:
-	default:
-		// For now
-		log.Warn().Str("format", f).Msg("Unsupported format. Using default clock rate")
-
-	}
-	return c
 }

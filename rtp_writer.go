@@ -9,12 +9,17 @@ import (
 	"github.com/pion/rtp"
 )
 
+type RTPIOWriter interface {
+	WriteRTP(p *rtp.Packet) error
+}
+
 // RTP Writer packetize any payload before pushing to active media session
 // It creates SSRC as identifier and all packets sent will be with this SSRC
 // For multiple streams, multiple RTP Writer needs to be created
 type RTPWriter struct {
 	RTPSession *RTPSession
 	Sess       *MediaSession
+	Writer     RTPIOWriter
 
 	// After each write this is set as packet.
 	LastPacket rtp.Packet
@@ -49,6 +54,7 @@ func NewRTPWriter(sess *RTPSession) *RTPWriter {
 	sess.writeStats.SSRC = w.SSRC
 	sess.writeStats.sampleRate = w.SampleRate
 	w.RTPSession = sess
+	w.Writer = w.RTPSession
 	return w
 }
 
@@ -57,11 +63,34 @@ func NewRTPWriter(sess *RTPSession) *RTPWriter {
 func NewRTPWriterMedia(sess *MediaSession) *RTPWriter {
 	codec := codecFromSession(sess)
 
+	w := NewRTPWriterCodec(sess, codec)
+	w.Sess = sess // Backward compatibility
+	// w := RTPWriter{
+	// 	Sess:        sess,
+	// 	Writer:      sess,
+	// 	seqWriter:   NewRTPSequencer(),
+	// 	PayloadType: codec.PayloadType,
+	// 	SampleRate:  codec.SampleRate,
+	// 	SSRC:        rand.Uint32(),
+	// 	// initTimestamp: rand.Uint32(), // TODO random start timestamp
+	// 	// MTU:         1500,
+
+	// 	// TODO: CSRC CSRC is contribution source identifiers.
+	// 	// This is set when media is passed trough mixer/translators and original SSRC wants to be preserverd
+	// }
+
+	// w.nextTimestamp = w.initTimestamp
+	// w.updateClockRate(codec)
+
+	return w
+}
+
+func NewRTPWriterCodec(writer RTPIOWriter, codec Codec) *RTPWriter {
 	w := RTPWriter{
-		Sess:        sess,
+		Writer:      writer,
 		seqWriter:   NewRTPSequencer(),
-		PayloadType: codec.payloadType,
-		SampleRate:  codec.sampleRate,
+		PayloadType: codec.PayloadType,
+		SampleRate:  codec.SampleRate,
 		SSRC:        rand.Uint32(),
 		// initTimestamp: rand.Uint32(), // TODO random start timestamp
 		// MTU:         1500,
@@ -72,16 +101,16 @@ func NewRTPWriterMedia(sess *MediaSession) *RTPWriter {
 
 	w.nextTimestamp = w.initTimestamp
 	w.updateClockRate(codec)
-
 	return &w
 }
 
-func (w *RTPWriter) updateClockRate(cod codec) {
-	w.sampleRateTimestamp = cod.sampleTimestamp()
+func (w *RTPWriter) updateClockRate(cod Codec) {
+	w.sampleRateTimestamp = cod.SampleTimestamp()
 	if w.clockTicker != nil {
-		w.clockTicker.Stop()
+		w.clockTicker.Reset(cod.SampleDur)
+	} else {
+		w.clockTicker = time.NewTicker(cod.SampleDur)
 	}
-	w.clockTicker = time.NewTicker(cod.sampleDur)
 }
 
 // Write implements io.Writer and does payload RTP packetization
@@ -125,18 +154,19 @@ func (p *RTPWriter) WriteSamples(payload []byte, clockRateTimestamp uint32, mark
 	p.LastPacket = pkt
 	p.nextTimestamp += clockRateTimestamp
 
-	if p.RTPSession != nil {
-		err := p.RTPSession.WriteRTP(&pkt)
-		return len(pkt.Payload), err
-	}
+	err := p.Writer.WriteRTP(&pkt)
+	// if p.RTPSession != nil {
+	// 	err := p.RTPSession.WriteRTP(&pkt)
+	// 	return len(pkt.Payload), err
+	// }
 
-	err := p.Sess.WriteRTP(&pkt)
+	// err := p.Sess.WriteRTP(&pkt)
 	return len(pkt.Payload), err
 }
 
 // Experimental
 //
-// RTPWriterConcurent allows updating RTPSession on RTPWriter and more (in case of regonation)
+// RTPWriterConcurent allows updating RTPSession on RTPWriter and more (in case of reestablish)
 type RTPWriterConcurent struct {
 	*RTPWriter
 	mu sync.Mutex
@@ -144,16 +174,40 @@ type RTPWriterConcurent struct {
 
 func (w *RTPWriterConcurent) Write(b []byte) (int, error) {
 	w.mu.Lock()
-	defer w.mu.Unlock()
-	return w.RTPWriter.Write(b)
+	n, err := w.RTPWriter.Write(b)
+	w.mu.Unlock()
+	return n, err
 }
 
 func (w *RTPWriterConcurent) SetRTPSession(rtpSess *RTPSession) {
+	// THis is buggy for some reason
 	codec := codecFromSession(rtpSess.Sess)
+
 	w.mu.Lock()
+	w.RTPWriter.Sess = rtpSess.Sess
 	w.RTPWriter.RTPSession = rtpSess
-	w.PayloadType = codec.payloadType
-	w.SampleRate = codec.sampleRate
+	w.PayloadType = codec.PayloadType
+	w.SampleRate = codec.SampleRate
 	w.updateClockRate(codec)
+
+	rtpSess.writeStats.SSRC = w.SSRC
+	rtpSess.writeStats.sampleRate = w.SampleRate
+	w.mu.Unlock()
+}
+
+func (w *RTPWriterConcurent) SetRTPWriter(rtpWriter *RTPWriter) {
+
+	w.mu.Lock()
+	ssrc := w.RTPWriter.SSRC
+	sampleRate := w.RTPWriter.SampleRate
+
+	// Preserve same stream ID timestamp but only in case same clock rate
+	// https://datatracker.ietf.org/doc/html/rfc7160#section-4.1
+	if rtpWriter.SampleRate == sampleRate {
+		rtpWriter.SSRC = ssrc
+		rtpWriter.initTimestamp = w.RTPWriter.initTimestamp
+		rtpWriter.nextTimestamp = w.RTPWriter.nextTimestamp
+	}
+	w.RTPWriter = rtpWriter
 	w.mu.Unlock()
 }

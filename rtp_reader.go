@@ -48,7 +48,7 @@ func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
 
 	w := RTPReader{
 		Sess:        sess,
-		PayloadType: codec.payloadType,
+		PayloadType: codec.PayloadType,
 		OnRTP:       func(pkt *rtp.Packet) {},
 
 		seqReader:     RTPExtendedSequenceNumber{},
@@ -167,6 +167,12 @@ func (r *RTPReaderConcurent) SetRTPSession(rtpSess *RTPSession) {
 	codec := codecFromSession(rtpSess.Sess)
 	r.mu.Lock()
 	r.RTPSession = rtpSess
-	r.PayloadType = codec.payloadType
+	r.PayloadType = codec.PayloadType
+	r.mu.Unlock()
+}
+
+func (r *RTPReaderConcurent) SetRTPReader(rtpReader *RTPReader) {
+	r.mu.Lock()
+	r.RTPReader = rtpReader
 	r.mu.Unlock()
 }

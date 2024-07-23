@@ -10,6 +10,7 @@ import (
 	"github.com/emiago/media/sdp"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"github.com/rs/zerolog"
 )
 
 // RTP session is RTP ReadWriter with control (RTCP) reporting
@@ -42,6 +43,8 @@ type RTPSession struct {
 	// this intercepts reading or writing rtcp packet. Allows manipulation
 	OnReadRTCP  func(pkt rtcp.Packet, rtpStats RTPReadStats)
 	OnWriteRTCP func(pkt rtcp.Packet, rtpStats RTPWriteStats)
+
+	log zerolog.Logger
 }
 
 // Some of fields here are exported (as readonly) intentionally
@@ -133,7 +136,7 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 			SSRC:                   readPkt.SSRC,
 			FirstPktSequenceNumber: readPkt.SequenceNumber,
 
-			sampleRate: codec.sampleRate,
+			sampleRate: codec.SampleRate,
 		}
 		stats.lastSeq.InitSeq(readPkt.SequenceNumber)
 	} else {
@@ -191,7 +194,7 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 
 		*writeStats = RTPWriteStats{
 			SSRC:       pkt.SSRC,
-			sampleRate: codec.sampleRate,
+			sampleRate: codec.SampleRate,
 		}
 	}
 
@@ -439,11 +442,11 @@ func (s *RTPSession) parseReceptionReport(receptionReport *rtcp.ReceptionReport,
 	// Assert
 
 	lastReceivedSenderReportTime := readStats.lastSenderReportRecvTime
-	if lastReceivedSenderReportTime.IsZero() {
-		panic("sender report time is zero")
+	var delay time.Duration
+	if !lastReceivedSenderReportTime.IsZero() {
+		delay = now.Sub(lastReceivedSenderReportTime)
 	}
 
-	delay := now.Sub(lastReceivedSenderReportTime)
 	// TODO handle multiple SSRC
 	*receptionReport = rtcp.ReceptionReport{
 		SSRC:               readStats.SSRC,
