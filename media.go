@@ -242,7 +242,7 @@ func (m *MediaSession) ReadRTP(buf []byte, pkt *rtp.Packet) error {
 		return err
 	}
 
-	if err := rtpUnmarshal(buf[:n], pkt); err != nil {
+	if err := RTPUnmarshal(buf[:n], pkt); err != nil {
 		return err
 	}
 
@@ -295,15 +295,16 @@ func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) 
 	return m.ReadRTPRaw(buf)
 }
 
-func (m *MediaSession) ReadRTCP(pkts []rtcp.Packet) (n int, err error) {
+// Passing buf allows reusage by upper API
+func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error) {
 	// TODO fix this
-	rawBuf := make([]byte, 1600)
-	nn, err := m.ReadRTCPRaw(rawBuf)
+	// rawBuf := make([]byte, 1600)
+	nn, err := m.ReadRTCPRaw(buf)
 	if err != nil {
 		return n, err
 	}
 
-	n, err = rtcpUnmarshal(rawBuf[:nn], pkts)
+	n, err = RTCPUnmarshal(buf[:nn], pkts)
 	if err != nil {
 		return 0, err
 	}

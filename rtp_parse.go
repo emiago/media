@@ -10,11 +10,11 @@ import (
 
 // Experimental
 //
-// rtpUnmarshal temporarly solution to provide more optimized unmarshal version based on pion/rtp
+// RTPUnmarshal temporarly solution to provide more optimized unmarshal version based on pion/rtp
 // it does not preserve any buffer reference which allows reusage
 //
 // TODO build RTP header unmarshaller for VOIP needs
-func rtpUnmarshal(buf []byte, p *rtp.Packet) error {
+func RTPUnmarshal(buf []byte, p *rtp.Packet) error {
 	n, err := p.Header.Unmarshal(buf)
 	if err != nil {
 		return err
@@ -44,10 +44,10 @@ func rtpUnmarshal(buf []byte, p *rtp.Packet) error {
 	return nil
 }
 
-// rtcpUnmarshal is improved version based on pion/rtcp where we allow caller to define and control
+// RTCPUnmarshal is improved version based on pion/rtcp where we allow caller to define and control
 // buffer of rtcp packets. This also reduces one allocation
 // NOTE: data is still referenced in packet buffer
-func rtcpUnmarshal(data []byte, packets []rtcp.Packet) (n int, err error) {
+func RTCPUnmarshal(data []byte, packets []rtcp.Packet) (n int, err error) {
 	for i := 0; i < len(packets) && len(data) != 0; i++ {
 		var h rtcp.Header
 

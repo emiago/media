@@ -6,11 +6,23 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 )
 
 type RTPIOWriter interface {
 	WriteRTP(p *rtp.Packet) error
+}
+type RTPIOWriterRaw interface {
+	WriteRTPRaw(buf []byte) (int, error) // -> io.Writer
+}
+
+type RTCPIOWriter interface {
+	WriteRTCP(p rtcp.Packet) error
+}
+
+type RTCPIOWriterRaw interface {
+	WriteRTCPRaw(buf []byte) (int, error) // -> io.Writer
 }
 
 // RTP Writer packetize any payload before pushing to active media session
@@ -54,7 +66,7 @@ func NewRTPWriter(sess *RTPSession) *RTPWriter {
 	sess.writeStats.SSRC = w.SSRC
 	sess.writeStats.sampleRate = w.SampleRate
 	w.RTPSession = sess
-	w.Writer = w.RTPSession
+	w.Writer = sess
 	return w
 }
 

@@ -82,7 +82,7 @@ func TestReadRTCP(t *testing.T) {
 		writer.Write(data)
 	}()
 	pkts := make([]rtcp.Packet, 5)
-	n, err := session.ReadRTCP(pkts)
+	n, err := session.ReadRTCP(make([]byte, 1600), pkts)
 	require.NoError(t, err)
 	require.Equal(t, 2, n)
 	require.IsType(t, &rtcp.SenderReport{}, pkts[0])

@@ -179,6 +179,12 @@ func (s *RTPSession) ReadRTP(b []byte, readPkt *rtp.Packet) error {
 	return nil
 }
 
+func (s *RTPSession) ReadRTPRaw(buf []byte) (int, error) {
+	// In this case just proxy RTP. RTP Session can not work without full RTP decoded
+	// It is expected that RTCP is also proxied
+	return s.Sess.ReadRTPRaw(buf)
+}
+
 func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	// Do not write if we are creating RTCP packet
 
@@ -211,6 +217,12 @@ func (s *RTPSession) WriteRTP(pkt *rtp.Packet) error {
 	// default:
 	// }
 	return nil
+}
+
+func (s *RTPSession) WriteRTPRaw(buf []byte) (int, error) {
+	// In this case just proxy RTP. RTP Session can not work without full RTP decoded
+	// It is expected that RTCP is also proxied
+	return s.Sess.WriteRTCPRaw(buf)
 }
 
 // Monitor starts reading RTCP and monitoring media quality
@@ -273,15 +285,17 @@ func (s *RTPSession) MonitorBackground() {
 
 func (s *RTPSession) readRTCP() error {
 	sess := s.Sess
-	buf := make([]rtcp.Packet, 5)              // What would be more correct value?
+	// TODO use sync pool here
+	buf := make([]byte, 1600)
+	rtcpBuf := make([]rtcp.Packet, 5)          // What would be more correct value?
 	sess.rtcpConn.SetReadDeadline(time.Time{}) // For now make sure we are not getting timeout
 	for {
-		n, err := sess.ReadRTCP(buf)
+		n, err := sess.ReadRTCP(buf, rtcpBuf)
 		if err != nil {
 			return err
 		}
 
-		for _, pkt := range buf[:n] {
+		for _, pkt := range rtcpBuf[:n] {
 			s.readRTCPPacket(pkt)
 		}
 	}

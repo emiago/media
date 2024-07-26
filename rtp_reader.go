@@ -7,13 +7,31 @@ import (
 	"net"
 	"sync"
 
+	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
 )
+
+type RTPIOReader interface {
+	ReadRTP(buf []byte, p *rtp.Packet) error
+}
+
+type RTPIOReaderRaw interface {
+	ReadRTPRaw(buf []byte) (int, error)
+}
+
+type RTCPIOReader interface {
+	ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error)
+}
+
+type RTPCIOReaderRaw interface {
+	ReadRTCPRaw(buf []byte) (int, error)
+}
 
 // RTP Writer packetize any payload before pushing to active media session
 type RTPReader struct {
 	Sess       *MediaSession
 	RTPSession *RTPSession
+	Reader     RTPIOReader
 
 	// Deprecated
 	//
@@ -38,6 +56,7 @@ type RTPReader struct {
 func NewRTPReader(sess *RTPSession) *RTPReader {
 	r := NewRTPReaderMedia(sess.Sess)
 	r.RTPSession = sess
+	r.Reader = sess
 	return r
 }
 
@@ -46,8 +65,23 @@ func NewRTPReader(sess *RTPSession) *RTPReader {
 func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
 	codec := codecFromSession(sess)
 
+	// w := RTPReader{
+	// 	Sess:        sess,
+	// 	PayloadType: codec.PayloadType,
+	// 	OnRTP:       func(pkt *rtp.Packet) {},
+
+	// 	seqReader:     RTPExtendedSequenceNumber{},
+	// 	unreadPayload: make([]byte, RTPBufSize),
+	// }
+	w := NewRTPReaderCodec(sess, codec)
+	w.Sess = sess // For backward compatibility
+
+	return w
+}
+
+func NewRTPReaderCodec(reader RTPIOReader, codec Codec) *RTPReader {
 	w := RTPReader{
-		Sess:        sess,
+		Reader:      reader,
 		PayloadType: codec.PayloadType,
 		OnRTP:       func(pkt *rtp.Packet) {},
 
@@ -70,7 +104,7 @@ func (r *RTPReader) Read(b []byte) (int, error) {
 	}
 
 	var n int
-	var err error
+	// var err error
 
 	// For io.ReadAll buffer size is constantly changing and starts small
 	// Normally user should > RTPBufSize
@@ -92,8 +126,7 @@ func (r *RTPReader) Read(b []byte) (int, error) {
 	} else {
 
 		// Reuse read buffer.
-		n, err = r.Sess.ReadRTPRaw(buf)
-		if err != nil {
+		if err := r.Sess.ReadRTP(buf, &pkt); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return 0, io.EOF
 			}
@@ -102,9 +135,9 @@ func (r *RTPReader) Read(b []byte) (int, error) {
 
 		// NOTE: pkt after unmarshall will hold reference on b buffer.
 		// Caller should do copy of PacketHeader if it reuses buffer
-		if err := pkt.Unmarshal(buf[:n]); err != nil {
-			return 0, err
-		}
+		// if err := pkt.Unmarshal(buf[:n]); err != nil {
+		// 	return 0, err
+		// }
 	}
 
 	if r.PayloadType != pkt.PayloadType {
