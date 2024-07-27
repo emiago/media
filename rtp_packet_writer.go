@@ -10,28 +10,28 @@ import (
 	"github.com/pion/rtp"
 )
 
-type RTPIOWriter interface {
+type RTPWriter interface {
 	WriteRTP(p *rtp.Packet) error
 }
-type RTPIOWriterRaw interface {
+type RTPWriterRaw interface {
 	WriteRTPRaw(buf []byte) (int, error) // -> io.Writer
 }
 
-type RTCPIOWriter interface {
+type RTCPWriter interface {
 	WriteRTCP(p rtcp.Packet) error
 }
 
-type RTCPIOWriterRaw interface {
+type RTCPWriterRaw interface {
 	WriteRTCPRaw(buf []byte) (int, error) // -> io.Writer
 }
 
-// RTP Writer packetize any payload before pushing to active media session
+// RTPPacketWriter packetize any payload before pushing to active media session
 // It creates SSRC as identifier and all packets sent will be with this SSRC
 // For multiple streams, multiple RTP Writer needs to be created
-type RTPWriter struct {
+type RTPPacketWriter struct {
 	RTPSession *RTPSession
 	Sess       *MediaSession
-	Writer     RTPIOWriter
+	Writer     RTPWriter
 
 	// After each write this is set as packet.
 	LastPacket rtp.Packet
@@ -59,8 +59,8 @@ type RTPWriter struct {
 // - CSRC contribution source
 // - Silence detection and marker set
 // updateClockRate- Padding and encryyption
-func NewRTPWriter(sess *RTPSession) *RTPWriter {
-	w := NewRTPWriterMedia(sess.Sess)
+func NewRTPPacketWriterSession(sess *RTPSession) *RTPPacketWriter {
+	w := NewRTPPacketWriterMedia(sess.Sess)
 	// We need to add our SSRC due to sender report, which can be empty until data comes
 	// It is expected that nothing travels yet through rtp session
 	sess.writeStats.SSRC = w.SSRC
@@ -70,12 +70,12 @@ func NewRTPWriter(sess *RTPSession) *RTPWriter {
 	return w
 }
 
-// NewRTPWriterMedia is left for backward compability. It does not add RTCP reporting
+// NewRTPPacketWriterMedia is left for backward compability. It does not add RTCP reporting
 // RTPSession should be used for media quality reporting
-func NewRTPWriterMedia(sess *MediaSession) *RTPWriter {
+func NewRTPPacketWriterMedia(sess *MediaSession) *RTPPacketWriter {
 	codec := codecFromSession(sess)
 
-	w := NewRTPWriterCodec(sess, codec)
+	w := NewRTPPacketWriter(sess, codec)
 	w.Sess = sess // Backward compatibility
 	// w := RTPWriter{
 	// 	Sess:        sess,
@@ -97,8 +97,8 @@ func NewRTPWriterMedia(sess *MediaSession) *RTPWriter {
 	return w
 }
 
-func NewRTPWriterCodec(writer RTPIOWriter, codec Codec) *RTPWriter {
-	w := RTPWriter{
+func NewRTPPacketWriter(writer RTPWriter, codec Codec) *RTPPacketWriter {
+	w := RTPPacketWriter{
 		Writer:      writer,
 		seqWriter:   NewRTPSequencer(),
 		PayloadType: codec.PayloadType,
@@ -116,7 +116,7 @@ func NewRTPWriterCodec(writer RTPIOWriter, codec Codec) *RTPWriter {
 	return &w
 }
 
-func (w *RTPWriter) updateClockRate(cod Codec) {
+func (w *RTPPacketWriter) updateClockRate(cod Codec) {
 	w.sampleRateTimestamp = cod.SampleTimestamp()
 	if w.clockTicker != nil {
 		w.clockTicker.Reset(cod.SampleDur)
@@ -134,13 +134,13 @@ func (w *RTPWriter) updateClockRate(cod Codec) {
 // - Media clock rate of payload is consistent
 // - Packet loss detection
 // - RTCP generating
-func (p *RTPWriter) Write(b []byte) (int, error) {
+func (p *RTPPacketWriter) Write(b []byte) (int, error) {
 	n, err := p.WriteSamples(b, p.sampleRateTimestamp, p.nextTimestamp == p.initTimestamp, p.PayloadType)
 	<-p.clockTicker.C
 	return n, err
 }
 
-func (p *RTPWriter) WriteSamples(payload []byte, clockRateTimestamp uint32, marker bool, payloadType uint8) (int, error) {
+func (p *RTPPacketWriter) WriteSamples(payload []byte, clockRateTimestamp uint32, marker bool, payloadType uint8) (int, error) {
 	pkt := rtp.Packet{
 		Header: rtp.Header{
 			Version:     2,
@@ -178,26 +178,26 @@ func (p *RTPWriter) WriteSamples(payload []byte, clockRateTimestamp uint32, mark
 
 // Experimental
 //
-// RTPWriterConcurent allows updating RTPSession on RTPWriter and more (in case of reestablish)
-type RTPWriterConcurent struct {
-	*RTPWriter
+// RTPPacketWriterConcurent allows updating RTPSession on RTPWriter and more (in case of reestablish)
+type RTPPacketWriterConcurent struct {
+	*RTPPacketWriter
 	mu sync.Mutex
 }
 
-func (w *RTPWriterConcurent) Write(b []byte) (int, error) {
+func (w *RTPPacketWriterConcurent) Write(b []byte) (int, error) {
 	w.mu.Lock()
-	n, err := w.RTPWriter.Write(b)
+	n, err := w.RTPPacketWriter.Write(b)
 	w.mu.Unlock()
 	return n, err
 }
 
-func (w *RTPWriterConcurent) SetRTPSession(rtpSess *RTPSession) {
+func (w *RTPPacketWriterConcurent) SetRTPSession(rtpSess *RTPSession) {
 	// THis is buggy for some reason
 	codec := codecFromSession(rtpSess.Sess)
 
 	w.mu.Lock()
-	w.RTPWriter.Sess = rtpSess.Sess
-	w.RTPWriter.RTPSession = rtpSess
+	w.RTPPacketWriter.Sess = rtpSess.Sess
+	w.RTPPacketWriter.RTPSession = rtpSess
 	w.PayloadType = codec.PayloadType
 	w.SampleRate = codec.SampleRate
 	w.updateClockRate(codec)
@@ -207,19 +207,19 @@ func (w *RTPWriterConcurent) SetRTPSession(rtpSess *RTPSession) {
 	w.mu.Unlock()
 }
 
-func (w *RTPWriterConcurent) SetRTPWriter(rtpWriter *RTPWriter) {
+func (w *RTPPacketWriterConcurent) SetRTPWriter(rtpWriter *RTPPacketWriter) {
 
 	w.mu.Lock()
-	ssrc := w.RTPWriter.SSRC
-	sampleRate := w.RTPWriter.SampleRate
+	ssrc := w.RTPPacketWriter.SSRC
+	sampleRate := w.RTPPacketWriter.SampleRate
 
 	// Preserve same stream ID timestamp but only in case same clock rate
 	// https://datatracker.ietf.org/doc/html/rfc7160#section-4.1
 	if rtpWriter.SampleRate == sampleRate {
 		rtpWriter.SSRC = ssrc
-		rtpWriter.initTimestamp = w.RTPWriter.initTimestamp
-		rtpWriter.nextTimestamp = w.RTPWriter.nextTimestamp
+		rtpWriter.initTimestamp = w.RTPPacketWriter.initTimestamp
+		rtpWriter.nextTimestamp = w.RTPPacketWriter.nextTimestamp
 	}
-	w.RTPWriter = rtpWriter
+	w.RTPPacketWriter = rtpWriter
 	w.mu.Unlock()
 }

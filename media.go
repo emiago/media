@@ -295,10 +295,9 @@ func (m *MediaSession) ReadRTPRawDeadline(buf []byte, t time.Time) (int, error) 
 	return m.ReadRTPRaw(buf)
 }
 
-// Passing buf allows reusage by upper API
+// ReadRTCP is optimized reads and unmarshals RTCP packets. Buffers is only used for unmarshaling.
+// Caller needs to be aware of size this buffer and allign with MTU
 func (m *MediaSession) ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error) {
-	// TODO fix this
-	// rawBuf := make([]byte, 1600)
 	nn, err := m.ReadRTCPRaw(buf)
 	if err != nil {
 		return n, err

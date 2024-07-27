@@ -11,27 +11,27 @@ import (
 	"github.com/pion/rtp"
 )
 
-type RTPIOReader interface {
+type RTPReader interface {
 	ReadRTP(buf []byte, p *rtp.Packet) error
 }
 
-type RTPIOReaderRaw interface {
+type RTPReaderRaw interface {
 	ReadRTPRaw(buf []byte) (int, error)
 }
 
-type RTCPIOReader interface {
+type RTCPReader interface {
 	ReadRTCP(buf []byte, pkts []rtcp.Packet) (n int, err error)
 }
 
-type RTPCIOReaderRaw interface {
+type RTPCReaderRaw interface {
 	ReadRTCPRaw(buf []byte) (int, error)
 }
 
-// RTP Writer packetize any payload before pushing to active media session
-type RTPReader struct {
+// RTPPacketReader reads RTP packet and extracts payload and header
+type RTPPacketReader struct {
 	Sess       *MediaSession
 	RTPSession *RTPSession
-	Reader     RTPIOReader
+	Reader     RTPReader
 
 	// Deprecated
 	//
@@ -53,8 +53,8 @@ type RTPReader struct {
 
 // RTP reader consumes samples of audio from RTP session
 // Use NewRTPSession to construct RTP session
-func NewRTPReader(sess *RTPSession) *RTPReader {
-	r := NewRTPReaderMedia(sess.Sess)
+func NewRTPPacketReaderSession(sess *RTPSession) *RTPPacketReader {
+	r := NewRTPPacketReaderMedia(sess.Sess)
 	r.RTPSession = sess
 	r.Reader = sess
 	return r
@@ -62,7 +62,7 @@ func NewRTPReader(sess *RTPSession) *RTPReader {
 
 // NewRTPWriterMedia is left for backward compability. It does not add RTCP reporting
 // It talks directly to network
-func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
+func NewRTPPacketReaderMedia(sess *MediaSession) *RTPPacketReader {
 	codec := codecFromSession(sess)
 
 	// w := RTPReader{
@@ -73,14 +73,14 @@ func NewRTPReaderMedia(sess *MediaSession) *RTPReader {
 	// 	seqReader:     RTPExtendedSequenceNumber{},
 	// 	unreadPayload: make([]byte, RTPBufSize),
 	// }
-	w := NewRTPReaderCodec(sess, codec)
+	w := NewRTPPacketReader(sess, codec)
 	w.Sess = sess // For backward compatibility
 
 	return w
 }
 
-func NewRTPReaderCodec(reader RTPIOReader, codec Codec) *RTPReader {
-	w := RTPReader{
+func NewRTPPacketReader(reader RTPReader, codec Codec) *RTPPacketReader {
+	w := RTPPacketReader{
 		Reader:      reader,
 		PayloadType: codec.PayloadType,
 		OnRTP:       func(pkt *rtp.Packet) {},
@@ -96,8 +96,8 @@ func NewRTPReaderCodec(reader RTPIOReader, codec Codec) *RTPReader {
 // has no input queue or sorting control of packets
 // Buffer is used for reading headers and Headers are stored in PacketHeader
 //
-// NOTE: Consider that if you are passsing smaller buffer than RTP payload, io.ErrShortBuffer is returned
-func (r *RTPReader) Read(b []byte) (int, error) {
+// NOTE: Consider that if you are passsing smaller buffer than RTP header+payload, io.ErrShortBuffer is returned
+func (r *RTPPacketReader) Read(b []byte) (int, error) {
 	if r.unread > 0 {
 		n := r.readPayload(b, r.unreadPayload[:r.unread])
 		return n, nil
@@ -168,7 +168,7 @@ func (r *RTPReader) Read(b []byte) (int, error) {
 	return n, nil
 }
 
-func (r *RTPReader) readPayload(b []byte, payload []byte) int {
+func (r *RTPPacketReader) readPayload(b []byte, payload []byte) int {
 	n := copy(b, payload)
 	if n < len(payload) {
 		written := copy(r.unreadPayload, payload[n:])
@@ -184,19 +184,19 @@ func (r *RTPReader) readPayload(b []byte, payload []byte) int {
 
 // Experimental
 //
-// RTPReaderConcurent allows updating RTPSession on RTPWriter and more (in case of regonation)
-type RTPReaderConcurent struct {
-	*RTPReader
+// RTPPacketReaderConcurent allows updating RTPSession on RTPWriter and more (in case of regonation)
+type RTPPacketReaderConcurent struct {
+	*RTPPacketReader
 	mu sync.Mutex
 }
 
-func (r *RTPReaderConcurent) Read(b []byte) (int, error) {
+func (r *RTPPacketReaderConcurent) Read(b []byte) (int, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.RTPReader.Read(b)
+	return r.RTPPacketReader.Read(b)
 }
 
-func (r *RTPReaderConcurent) SetRTPSession(rtpSess *RTPSession) {
+func (r *RTPPacketReaderConcurent) SetRTPSession(rtpSess *RTPSession) {
 	codec := codecFromSession(rtpSess.Sess)
 	r.mu.Lock()
 	r.RTPSession = rtpSess
@@ -204,8 +204,8 @@ func (r *RTPReaderConcurent) SetRTPSession(rtpSess *RTPSession) {
 	r.mu.Unlock()
 }
 
-func (r *RTPReaderConcurent) SetRTPReader(rtpReader *RTPReader) {
+func (r *RTPPacketReaderConcurent) SetRTPReader(rtpReader *RTPPacketReader) {
 	r.mu.Lock()
-	r.RTPReader = rtpReader
+	r.RTPPacketReader = rtpReader
 	r.mu.Unlock()
 }

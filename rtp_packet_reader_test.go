@@ -33,7 +33,7 @@ func TestRTPReader(t *testing.T) {
 	rtpConn := bytes.NewBuffer([]byte{})
 	sess := fakeMediaSessionReader(0, rtpConn)
 	rtpSess := NewRTPSession(sess)
-	rtpReader := NewRTPReader(rtpSess)
+	rtpReader := NewRTPPacketReaderSession(rtpSess)
 
 	payload := []byte("12312313")
 	N := 10
@@ -71,7 +71,7 @@ func BenchmarkRTPReader(b *testing.B) {
 	rtpConn := bytes.NewBuffer([]byte{})
 	sess := fakeMediaSessionReader(0, rtpConn)
 	rtpSess := NewRTPSession(sess)
-	rtpReader := NewRTPReader(rtpSess)
+	rtpReader := NewRTPPacketReaderSession(rtpSess)
 
 	payload := []byte("12312313")
 	buf := make([]byte, 3200)

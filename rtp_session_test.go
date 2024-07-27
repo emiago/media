@@ -73,7 +73,7 @@ func TestRTPSessionReading(t *testing.T) {
 		1, 1, 1, 1, 1,
 	}
 
-	rtpWriter := NewRTPWriter(rtpSessWrite)
+	rtpWriter := NewRTPPacketWriterSession(rtpSessWrite)
 	go func() {
 		// Setup remote session
 		// defer rtpWrite.Sess.Close()
@@ -92,7 +92,7 @@ func TestRTPSessionReading(t *testing.T) {
 		}
 	}()
 
-	rtpReader := NewRTPReader(rtpSessRead)
+	rtpReader := NewRTPPacketReaderSession(rtpSessRead)
 	readBuf := make([]byte, 1500)
 	for i := 0; i < len(rtpStream); i++ {
 		_, err := rtpReader.Read(readBuf)
@@ -137,7 +137,7 @@ func TestRTPSessionWriting(t *testing.T) {
 		1, 1, 1, 1, 1,
 	}
 
-	rtpReader := NewRTPReader(rtpSessRead)
+	rtpReader := NewRTPPacketReaderSession(rtpSessRead)
 	go func() {
 		readBuf := make([]byte, 1500)
 		for i := 0; i < len(rtpStream); i++ {
@@ -148,7 +148,7 @@ func TestRTPSessionWriting(t *testing.T) {
 		}
 	}()
 
-	rtpWriter := NewRTPWriter(rtpSessWrite)
+	rtpWriter := NewRTPPacketWriterSession(rtpSessWrite)
 	payload := make([]byte, 160)
 	for _, b := range rtpStream {
 		switch b {

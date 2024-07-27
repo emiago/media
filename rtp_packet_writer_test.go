@@ -33,7 +33,7 @@ func TestRTPWriter(t *testing.T) {
 	rtpConn := bytes.NewBuffer([]byte{})
 	sess := fakeMediaSessionWriter(0, 1234, rtpConn)
 	rtpSession := NewRTPSession(sess)
-	rtpWriter := NewRTPWriter(rtpSession)
+	rtpWriter := NewRTPPacketWriterSession(rtpSession)
 
 	payload := []byte("12312313")
 	N := 10
