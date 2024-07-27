@@ -29,7 +29,11 @@ Features:
 
 ## IO flow
 
-<img heigth=300 width=300 src="./images/design.png">
+Reader:
+`AudioDecoder<->RTPPacketReader<->RTPSession<->MediaSession`
+
+Writer:
+`AudioEncoder<->RTPPackerWriter<->RTPSession<->MediaSession`
 
 
 ### more docs...
