@@ -1,3 +1,9 @@
+# Development Moved!
+
+Media package is continuing development as part of bigger project [Diago](https://github.com/emiago/diago)
+Only minor fixes could be accepted before archive.
+
+
 # media
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/emiago/sipgo)](https://goreportcard.com/report/github.com/emiago/sipgo)
